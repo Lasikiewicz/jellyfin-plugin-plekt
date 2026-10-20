@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Plekt</title>
+</head>
+<body>
+    <div id="PlektConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
+        <div data-role="content">
+            <div class="content-primary">
+                <h2>Plekt connection</h2>
+                <p>Enter the Plekt address reachable from this Jellyfin server and the webhook secret shown in Plekt under Settings, Media Servers, Webhooks.</p>
+                <form id="PlektConfigForm">
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="PlektUrl">Plekt URL</label>
+                        <input id="PlektUrl" name="PlektUrl" type="url" is="emby-input" placeholder="http://plekt:5056" required />
+                        <div class="fieldDescription">Use the base address only. Jellyfin must be able to reach it.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="WebhookSecret">Webhook secret</label>
+                        <input id="WebhookSecret" name="WebhookSecret" type="password" is="emby-input" autocomplete="new-password" required />
+                        <div class="fieldDescription">Stored in Jellyfin's plugin configuration and sent only to Plekt.</div>
+                    </div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Save</span></button>
+                </form>
+                <p id="PlektStatus" role="status" aria-live="polite"></p>
+            </div>
+        </div>
+        <script>
+            const PlektConfig = { pluginUniqueId: 'f80947da-37dc-43e6-9f0d-1c77014b8118' };
+            const page = document.querySelector('#PlektConfigPage');
+            const form = document.querySelector('#PlektConfigForm');
+            const status = document.querySelector('#PlektStatus');
+
+            page.addEventListener('pageshow', () => {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(PlektConfig.pluginUniqueId).then(config => {
+                    document.querySelector('#PlektUrl').value = config.PlektUrl || '';
+                    document.querySelector('#WebhookSecret').value = config.WebhookSecret || '';
+                }).finally(() => Dashboard.hideLoadingMsg());
+            });
+
+            form.addEventListener('submit', event => {
+                event.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(PlektConfig.pluginUniqueId).then(config => {
+                    config.PlektUrl = document.querySelector('#PlektUrl').value.trim();
+                    config.WebhookSecret = document.querySelector('#WebhookSecret').value;
+                    return ApiClient.updatePluginConfiguration(PlektConfig.pluginUniqueId, config);
+                }).then(result => {
+                    status.textContent = 'Plekt settings saved.';
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                }).catch(() => {
+                    status.textContent = 'Could not save Plekt settings. Check the Jellyfin server logs.';
+                    Dashboard.hideLoadingMsg();
+                });
+            });
+        </script>
+    </div>
+</body>
+</html>

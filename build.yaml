@@ -1,0 +1,16 @@
+---
+name: "Plekt"
+guid: "f80947da-37dc-43e6-9f0d-1c77014b8118"
+version: "0.1.0.0"
+targetAbi: "12.2.0.0"
+framework: "net10.0"
+overview: "Send Jellyfin playback and watch-state changes to Plekt."
+description: >
+  Configure a Plekt URL and webhook secret in Jellyfin. The plugin forwards playback
+  and explicit watched/unwatched events to Plekt's existing webhook endpoint.
+category: "General"
+owner: "Lasikiewicz"
+artifacts:
+- "Jellyfin.Plugin.Plekt.dll"
+changelog: >
+  Initial development build.
