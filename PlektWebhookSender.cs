@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
 using System.Globalization;
-using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Jellyfin.Database.Implementations.Entities;
+using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -14,12 +15,35 @@ namespace Jellyfin.Plugin.Plekt;
 /// <summary>
 /// Creates Jellyfin Webhook plugin-compatible payloads and posts them to Plekt.
 /// </summary>
-internal static class PlektWebhookSender
+public sealed class PlektWebhookSender
 {
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ProgressInterval = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = null };
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastProgressSent = new();
 
-    public static async Task SendPlaybackAsync(
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PlektWebhookSender"/> class.
+    /// </summary>
+    /// <param name="httpClientFactory">Jellyfin's HTTP client factory.</param>
+    public PlektWebhookSender(IHttpClientFactory httpClientFactory) => _httpClientFactory = httpClientFactory;
+
+    /// <summary>
+    /// Posts a playback event for each user to Plekt.
+    /// </summary>
+    /// <param name="logger">Logger for delivery failures.</param>
+    /// <param name="notificationType">The Jellyfin Webhook-style notification type.</param>
+    /// <param name="item">The played item.</param>
+    /// <param name="users">The users the event applies to.</param>
+    /// <param name="positionTicks">The playback position in ticks.</param>
+    /// <param name="playedToCompletion">Whether playback reached completion.</param>
+    /// <param name="device">The device name.</param>
+    /// <param name="deviceId">The device identifier.</param>
+    /// <param name="client">The client application name.</param>
+    /// <param name="sessionId">The play session identifier.</param>
+    /// <returns>A task that completes when delivery has been attempted.</returns>
+    public async Task SendPlaybackAsync(
         ILogger logger,
         string notificationType,
         BaseItem? item,
@@ -34,13 +58,25 @@ internal static class PlektWebhookSender
         if (item is null || Plugin.Instance is null) return;
         foreach (var user in users)
         {
+            // Progress events repeat every few seconds per session, so they are throttled.
+            // Start and stop events are always sent, so Plekt sees every state change.
+            var progressKey = $"{sessionId}|{item.Id}|{user.Id}";
+            if (notificationType == "PlaybackProgress" && !ShouldSendProgress(progressKey)) continue;
+            if (notificationType == "PlaybackStop") _lastProgressSent.TryRemove(progressKey, out _);
+
             var payload = CreatePayload(notificationType, item, user.Id, user.Username);
             AddPlaybackFields(payload, positionTicks, playedToCompletion, device, deviceId, client, sessionId);
             await PostAsync(payload, logger).ConfigureAwait(false);
         }
     }
 
-    public static async Task SendUserDataAsync(UserDataSaveEventArgs eventArgs, ILogger logger)
+    /// <summary>
+    /// Posts an explicit watched or unwatched change to Plekt.
+    /// </summary>
+    /// <param name="eventArgs">The user data save event.</param>
+    /// <param name="logger">Logger for delivery failures.</param>
+    /// <returns>A task that completes when delivery has been attempted.</returns>
+    public async Task SendUserDataAsync(UserDataSaveEventArgs eventArgs, ILogger logger)
     {
         if (Plugin.Instance is null || eventArgs.Item is null) return;
 
@@ -57,28 +93,48 @@ internal static class PlektWebhookSender
             payload["LastPlayedDate"] = eventArgs.UserData.LastPlayedDate.Value;
         }
 
-        await PostAsync(payload, logger).ConfigureAwait(false);
+        if (await PostAsync(payload, logger).ConfigureAwait(false))
+        {
+            logger.LogInformation("Plekt watched-state change sent (played: {Played})", eventArgs.UserData.Played);
+        }
+    }
+
+    private bool ShouldSendProgress(string key)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_lastProgressSent.TryGetValue(key, out var last) && now - last < ProgressInterval) return false;
+
+        _lastProgressSent[key] = now;
+        if (_lastProgressSent.Count > 500)
+        {
+            // Forget sessions that have been quiet for an hour, so the map cannot grow without bound.
+            foreach (var entry in _lastProgressSent)
+            {
+                if (now - entry.Value > TimeSpan.FromHours(1)) _lastProgressSent.TryRemove(entry.Key, out _);
+            }
+        }
+        return true;
     }
 
     private static Dictionary<string, object?> CreatePayload(string notificationType, BaseItem item, Guid userId, string userName)
     {
         var itemData = new Dictionary<string, object?>
         {
-            ["Id"] = item.Id.ToString(),
+            ["Id"] = JellyfinId(item.Id),
             ["Type"] = item.GetType().Name,
             ["Name"] = item.Name,
             ["ProviderIds"] = item.ProviderIds,
             ["RunTimeTicks"] = item.RunTimeTicks,
             ["ProductionYear"] = item.ProductionYear,
             ["PremiereDate"] = item.PremiereDate,
-            ["ParentId"] = item.ParentId.ToString(),
+            ["ParentId"] = JellyfinId(item.ParentId),
             ["ParentIndexNumber"] = item.ParentIndexNumber,
             ["IndexNumber"] = item.IndexNumber,
         };
 
         if (item is Episode episode)
         {
-            itemData["SeriesId"] = episode.SeriesId.ToString();
+            itemData["SeriesId"] = JellyfinId(episode.SeriesId);
             itemData["SeriesName"] = episode.Series?.Name;
             itemData["SeriesProviderIds"] = episode.Series?.ProviderIds;
             itemData["SeriesProductionYear"] = episode.Series?.ProductionYear;
@@ -87,16 +143,20 @@ internal static class PlektWebhookSender
         return new Dictionary<string, object?>
         {
             ["NotificationType"] = notificationType,
-            ["ItemId"] = item.Id.ToString(),
+            ["ItemId"] = JellyfinId(item.Id),
             ["ItemType"] = item.GetType().Name,
             ["Name"] = item.Name,
             ["Item"] = itemData,
-            ["UserId"] = userId.ToString(),
+            ["UserId"] = JellyfinId(userId),
             ["UserName"] = userName,
             ["Timestamp"] = DateTimeOffset.UtcNow,
             ["UtcTimestamp"] = DateTimeOffset.UtcNow,
         };
     }
+
+    // Jellyfin's API writes ids without dashes. Plekt keys echo markers and sessions by
+    // that form, so a dashed id would never match them.
+    private static string JellyfinId(Guid id) => id.ToString("N", CultureInfo.InvariantCulture);
 
     private static void AddPlaybackFields(
         IDictionary<string, object?> payload,
@@ -119,20 +179,33 @@ internal static class PlektWebhookSender
         if (!string.IsNullOrWhiteSpace(sessionId)) payload["SessionId"] = sessionId;
     }
 
-    private static async Task PostAsync(Dictionary<string, object?> payload, ILogger logger)
+    private async Task<bool> PostAsync(Dictionary<string, object?> payload, ILogger logger)
     {
         var configuration = Plugin.Instance?.Configuration;
-        var baseUrl = configuration?.PlektUrl?.Trim().TrimEnd('/');
-        var secret = configuration?.WebhookSecret?.Trim();
-        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(secret)) return;
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri)
-            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)) return;
+        var webhookUrl = configuration?.WebhookUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+        {
+            // Keep existing installations working until they replace the split settings.
+            var baseUrl = configuration?.PlektUrl?.Trim().TrimEnd('/');
+            var secret = configuration?.WebhookSecret?.Trim();
+            if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(secret)) return false;
+            webhookUrl = $"{baseUrl}/api/webhook?token={Uri.EscapeDataString(secret)}";
+        }
 
-        var endpoint = new Uri($"{baseUrl}/api/webhook?token={WebUtility.UrlEncode(secret)}");
+        if (!Uri.TryCreate(webhookUrl, UriKind.Absolute, out var endpoint)
+            || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+        {
+            logger.LogWarning("Plekt webhook delivery failed (invalid webhook address)");
+            return false;
+        }
         try
         {
-            using var response = await Client.PostAsJsonAsync(endpoint, payload, JsonOptions).ConfigureAwait(false);
+            // Use Jellyfin's default named HTTP client.
+            var client = _httpClientFactory.CreateClient(NamedClient.Default);
+            using var timeout = new CancellationTokenSource(RequestTimeout);
+            using var response = await client.PostAsJsonAsync(endpoint, payload, JsonOptions, timeout.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
+            return true;
         }
         catch (Exception ex)
         {
@@ -140,6 +213,7 @@ internal static class PlektWebhookSender
             logger.LogWarning("Plekt webhook delivery failed ({Failure})", ex is HttpRequestException requestException
                 ? requestException.StatusCode?.ToString() ?? "network error"
                 : ex is TaskCanceledException ? "timeout" : "unexpected error");
+            return false;
         }
     }
 }

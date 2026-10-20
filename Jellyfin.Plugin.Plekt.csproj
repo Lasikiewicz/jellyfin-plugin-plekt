@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.Plekt</RootNamespace>
     <AssemblyName>Jellyfin.Plugin.Plekt</AssemblyName>
-    <Version>0.1.0.0</Version>
+    <Version>0.1.0.9</Version>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

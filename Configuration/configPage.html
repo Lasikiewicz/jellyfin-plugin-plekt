@@ -9,17 +9,12 @@
         <div data-role="content">
             <div class="content-primary">
                 <h2>Plekt connection</h2>
-                <p>Enter the Plekt address reachable from this Jellyfin server and the webhook secret shown in Plekt under Settings, Media Servers, Webhooks.</p>
+                <p>Copy the complete webhook address from Plekt under Settings, Media Servers, Webhooks.</p>
                 <form id="PlektConfigForm">
                     <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="PlektUrl">Plekt URL</label>
-                        <input id="PlektUrl" name="PlektUrl" type="url" is="emby-input" placeholder="http://plekt:5056" required />
-                        <div class="fieldDescription">Use the base address only. Jellyfin must be able to reach it.</div>
-                    </div>
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="WebhookSecret">Webhook secret</label>
-                        <input id="WebhookSecret" name="WebhookSecret" type="password" is="emby-input" autocomplete="new-password" required />
-                        <div class="fieldDescription">Stored in Jellyfin's plugin configuration and sent only to Plekt.</div>
+                        <label class="inputLabel inputLabelUnfocused" for="WebhookUrl">Plekt webhook address</label>
+                        <input id="WebhookUrl" name="WebhookUrl" type="url" is="emby-input" placeholder="http://localhost:5056/api/webhook?token=..." required />
+                        <div class="fieldDescription">Paste the full address exactly as shown in Plekt. Jellyfin must be able to reach the host in that address.</div>
                     </div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Save</span></button>
                 </form>
@@ -35,8 +30,10 @@
             page.addEventListener('pageshow', () => {
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(PlektConfig.pluginUniqueId).then(config => {
-                    document.querySelector('#PlektUrl').value = config.PlektUrl || '';
-                    document.querySelector('#WebhookSecret').value = config.WebhookSecret || '';
+                    document.querySelector('#WebhookUrl').value = config.WebhookUrl || '';
+                    if (!config.WebhookUrl && config.PlektUrl && config.WebhookSecret) {
+                        document.querySelector('#WebhookUrl').value = `${config.PlektUrl.replace(/\/$/, '')}/api/webhook?token=${encodeURIComponent(config.WebhookSecret)}`;
+                    }
                 }).finally(() => Dashboard.hideLoadingMsg());
             });
 
@@ -44,8 +41,7 @@
                 event.preventDefault();
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(PlektConfig.pluginUniqueId).then(config => {
-                    config.PlektUrl = document.querySelector('#PlektUrl').value.trim();
-                    config.WebhookSecret = document.querySelector('#WebhookSecret').value;
+                    config.WebhookUrl = document.querySelector('#WebhookUrl').value.trim();
                     return ApiClient.updatePluginConfiguration(PlektConfig.pluginUniqueId, config);
                 }).then(result => {
                     status.textContent = 'Plekt settings saved.';
