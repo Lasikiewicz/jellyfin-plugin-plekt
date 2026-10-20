@@ -18,7 +18,7 @@ python -m jprm plugin build . --output artifacts --version 0.1.0.4 --dotnet-fram
 python scripts/fix_jellyfin_image_meta.py artifacts/plekt_0.1.0.4.zip
 ```
 
-The archive includes a dark tile with the full Plekt wordmark. Run the helper after JPRM so the installed archive's `meta.json` uses Jellyfin's `imagePath` field.
+The archive includes the full Plekt wordmark on a transparent background. Run the helper after JPRM so the installed archive's `meta.json` uses Jellyfin's `imagePath` field.
 
 A release archive and catalog manifest are not published yet.
 

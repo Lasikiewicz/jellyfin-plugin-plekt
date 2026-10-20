@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/Lasikiewicz/jellyfin-plugin-plekt/main/image.png",
     "versions": [
       {
+        "version": "0.1.0.10",
+        "changelog": "Show the Plekt wordmark on a transparent background so it blends with Jellyfin's plugin page.",
+        "targetAbi": "12.2.0.0",
+        "sourceUrl": "https://github.com/Lasikiewicz/jellyfin-plugin-plekt/releases/download/v0.1.0.10/plekt_0.1.0.10.zip",
+        "checksum": "1f6c29c4ca5d22ae03dcf3bd2ca532fd",
+        "timestamp": "2026-10-20T15:35:17Z"
+      },
+      {
         "version": "0.1.0.9",
         "changelog": "Send explicit watched and unwatched changes to Plekt. Jellyfin raises user data saves outside its event manager, so the previous consumer never ran. Send Jellyfin ids without dashes, as Jellyfin's API does, so Plekt recognises its own writes. Log each delivered watched-state change.",
         "targetAbi": "12.2.0.0",
